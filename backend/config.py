@@ -33,7 +33,31 @@ _zones_raw = os.getenv("ZONES", '["Main Entrance", "Corridor", "Backyard", "Side
 ZONES: list[str] = json.loads(_zones_raw)
 
 # Database
-DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/data/incidents.db")
+def _ensure_sqlite_parent_dir(url: str) -> None:
+    """Create parent folder for SQLite file paths (fixes 'unable to open database file')."""
+    if not url.startswith("sqlite"):
+        return
+    try:
+        from sqlalchemy.engine.url import make_url
+
+        u = make_url(url)
+        if u.database in (None, "", ":memory:"):
+            return
+        path = Path(u.database)
+        if not path.is_absolute():
+            path = (BASE_DIR / path).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Fallback: default data dir
+        (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
+
+
+_default_db = (BASE_DIR / "data" / "incidents.db").resolve()
+DATABASE_URL: str = os.getenv(
+    "DATABASE_URL",
+    f"sqlite:///{_default_db.as_posix()}",
+)
+_ensure_sqlite_parent_dir(DATABASE_URL)
 
 # Snapshots (public: privacy-blurred JPEGs served under /snapshots)
 SNAPSHOT_DIR: Path = BASE_DIR / os.getenv("SNAPSHOT_DIR", "snapshots")
