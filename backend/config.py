@@ -73,17 +73,45 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 # Snapshot/incident data retention days (0 = keep forever)
 DATA_RETENTION_DAYS: int = int(os.getenv("DATA_RETENTION_DAYS", "30"))
 
+
+def parse_extra_animal_class_ids(raw: str | None) -> set[int]:
+    """
+    Parse EXTRA_ANIMAL_CLASS_IDS: comma-separated class indices from your fine-tuned
+    YOLO model (e.g. monkey as class 80 after COCO, or 1 for a 2-class person/monkey model).
+    Invalid tokens are skipped.
+    """
+    if not raw or not str(raw).strip():
+        return set()
+    out: set[int] = set()
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out
+
+
 # COCO class indices for animals (from COCO 80-class list)
-ANIMAL_CLASS_IDS: set[int] = {
-    14,  # bird
-    15,  # cat
-    16,  # dog
-    17,  # horse
-    18,  # sheep
-    19,  # cow
-    20,  # elephant
-    21,  # bear
-    22,  # zebra
-    23,  # giraffe
-}
-PERSON_CLASS_ID: int = 0
+_COCO_ANIMAL_CLASS_IDS: frozenset[int] = frozenset(
+    {
+        14,  # bird
+        15,  # cat
+        16,  # dog
+        17,  # horse
+        18,  # sheep
+        19,  # cow
+        20,  # elephant
+        21,  # bear
+        22,  # zebra
+        23,  # giraffe
+    }
+)
+# Union with extra ids from fine-tuned weights (see training/README.md)
+ANIMAL_CLASS_IDS: set[int] = set(_COCO_ANIMAL_CLASS_IDS) | parse_extra_animal_class_ids(
+    os.getenv("EXTRA_ANIMAL_CLASS_IDS")
+)
+# Default 0 (COCO person). Set if your custom model uses a different index for person.
+PERSON_CLASS_ID: int = int(os.getenv("PERSON_CLASS_ID", "0"))

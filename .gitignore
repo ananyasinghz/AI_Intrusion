@@ -13,3 +13,6 @@ reports/*.csv
 data/incidents.db
 node_modules/
 frontend/dist/
+# Ultralytics training runs
+runs/
+wandb/

@@ -1,0 +1,22 @@
+# Example YOLO dataset for a minimal person + monkey model.
+#
+# Use this file from the repo root as: --data training/example_monkey_dataset.yaml
+# Ultralytics resolves `path` relative to this file's directory (`training/`), so
+# `datasets/monkey` → training/datasets/monkey/
+#
+# Create:
+#   training/datasets/monkey/images/train
+#   training/datasets/monkey/images/val
+#   training/datasets/monkey/labels/train
+#   training/datasets/monkey/labels/val
+#
+# Or copy this to training/datasets/monkey/data.yaml and set `path: .`
+#
+# After training, monkey is class id 1 → set EXTRA_ANIMAL_CLASS_IDS=1 in .env
+
+path: datasets/monkey
+train: images/train
+val: images/val
+
+nc: 2
+names: ["person", "monkey"]

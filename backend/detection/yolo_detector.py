@@ -3,6 +3,8 @@ YOLOv8 small (yolov8s) inference wrapper.
 
 Changes from the nano version:
   - Uses yolov8s.pt for meaningfully better accuracy (~44.9 vs 36.3 mAP on COCO).
+  - Optional fine-tuned classes (e.g. monkey): set EXTRA_ANIMAL_CLASS_IDS in .env to
+    the YOLO class index(es) and point YOLO_MODEL_PATH at your weights.
   - Applies class-specific confidence thresholds:
       person: CONFIDENCE_THRESHOLD (default 0.45)
       animal: ANIMAL_CONFIDENCE_THRESHOLD (default 0.65)
