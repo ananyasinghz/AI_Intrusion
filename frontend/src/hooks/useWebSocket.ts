@@ -1,4 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
+import { useLiveEventsStore } from "../store/liveEventsStore";
+import { useAuthStore } from "../store/authStore";
 
 export interface LiveEvent {
   id: number;
@@ -9,6 +11,7 @@ export interface LiveEvent {
   label: string;
   confidence: number | null;
   snapshot_path: string | null;
+  snapshot_path_full?: string | null;
   source: string;
   appearance_id?: string | null;
   is_repeat_visitor?: boolean;
@@ -22,9 +25,8 @@ export interface LiveEvent {
  * Frames arrive at ~10 fps from the backend pipeline and are rendered
  * by whoever registers a frame handler (e.g. Dashboard).
  */
-import { useLiveEventsStore } from "../store/liveEventsStore";
-
 export function useWebSocket(maxEvents = 50) {
+  const accessToken = useAuthStore((s) => s.accessToken);
   const events = useLiveEventsStore((s) => s.events);
   const connected = useLiveEventsStore((s) => s.connected);
   const setConnected = useLiveEventsStore((s) => s.setConnected);
@@ -41,6 +43,11 @@ export function useWebSocket(maxEvents = 50) {
   }, [frameHandler]);
 
   const connect = useCallback(() => {
+    if (!accessToken) {
+      setConnected(false);
+      return;
+    }
+
     // Avoid duplicate sockets when reconnect timer and manual connect overlap.
     const current = wsRef.current;
     if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
@@ -48,10 +55,11 @@ export function useWebSocket(maxEvents = 50) {
     }
 
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const tokenParam = `token=${encodeURIComponent(accessToken)}`;
     // Avoid Vite WS proxy instability in dev by connecting directly to backend.
     const wsUrl = import.meta.env.DEV
-      ? "ws://127.0.0.1:8000/ws/live"
-      : `${proto}://${window.location.host}/ws/live`;
+      ? `ws://127.0.0.1:8000/ws/live?${tokenParam}`
+      : `${proto}://${window.location.host}/ws/live?${tokenParam}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -105,7 +113,7 @@ export function useWebSocket(maxEvents = 50) {
     };
 
     ws.onerror = () => ws.close();
-  }, [maxEvents]);
+  }, [maxEvents, accessToken, setConnected]);
 
   useEffect(() => {
     mountedRef.current = true;

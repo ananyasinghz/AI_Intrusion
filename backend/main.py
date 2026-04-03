@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -50,6 +51,12 @@ async def lifespan(application: FastAPI):
     finally:
         db.close()
     logger.info("Database ready. Default admin: admin / changeme")
+
+    # Pytest sets SKIP_PIPELINE_LIFESPAN so TestClient does not run the camera
+    # pipeline against the configured DATABASE_URL (avoids schema drift vs in-memory test DB).
+    if os.getenv("SKIP_PIPELINE_LIFESPAN"):
+        yield
+        return
 
     pipeline = DetectionPipeline(
         zone=ZONES[0] if ZONES else "Main Entrance",

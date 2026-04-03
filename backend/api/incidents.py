@@ -8,14 +8,35 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.auth.dependencies import require_admin, require_viewer
+from backend.config import SNAPSHOT_DIR_FULL
 from backend.database.db import get_db
 from backend.database.models import Incident, User
 
 router = APIRouter(prefix="/api", tags=["incidents"])
+
+
+def _safe_snapshot_filename(name: str) -> str:
+    if ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(status_code=400, detail="Invalid snapshot path")
+    return name
+
+
+@router.get("/snapshots/full/{filename}")
+def get_snapshot_full(
+    filename: str,
+    _: User = Depends(require_admin),
+):
+    """Serve unblurred snapshot from private storage (admin only)."""
+    fname = _safe_snapshot_filename(filename)
+    path = SNAPSHOT_DIR_FULL / fname
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.get("/incidents")

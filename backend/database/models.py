@@ -123,6 +123,8 @@ class Incident(Base):
     label = Column(String(100), nullable=True)
     confidence = Column(Float, nullable=True)
     snapshot_path = Column(Text, nullable=True)
+    # Unblurred snapshot (admin only); set when a person is visible in the frame
+    snapshot_path_full = Column(Text, nullable=True)
     # "camera", "pir", "mock_pir"
     source = Column(String(50), default="camera")
     # "open", "resolved"
@@ -148,6 +150,7 @@ class Incident(Base):
             "label": self.label,
             "confidence": round(self.confidence, 3) if self.confidence else None,
             "snapshot_path": self.snapshot_path,
+            "snapshot_path_full": self.snapshot_path_full,
             "source": self.source,
             "status": self.status,
             "track_id": self.track_id,

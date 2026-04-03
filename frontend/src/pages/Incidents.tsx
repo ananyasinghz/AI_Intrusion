@@ -3,17 +3,23 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { incidentsApi, zonesApi } from "../api/client";
 import { TypePill } from "../components/UI/TypePill";
 import { Card } from "../components/UI/Card";
+import { SnapshotImage } from "../components/SnapshotImage";
+import { useAuthStore } from "../store/authStore";
 import { CheckCircle, X, ZoomIn } from "lucide-react";
 import { format } from "date-fns";
 import toast from "react-hot-toast";
 
 export default function Incidents() {
+  const user = useAuthStore((s) => s.user);
   const [page, setPage] = useState(1);
   const [filterType, setFilterType] = useState("");
   const [filterZone, setFilterZone] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [modalImg, setModalImg] = useState<string | null>(null);
+  const [modalSnap, setModalSnap] = useState<{
+    snapshot_path: string | null;
+    snapshot_path_full?: string | null;
+  } | null>(null);
   const qc = useQueryClient();
   const PER_PAGE = 15;
 
@@ -42,11 +48,7 @@ export default function Incidents() {
 
   const totalPages = data ? Math.ceil(data.total / PER_PAGE) : 1;
 
-  function snapshotUrl(path: string | null) {
-    if (!path) return null;
-    const fname = path.split(/[/\\]/).pop();
-    return `/snapshots/${fname}`;
-  }
+  const role = user?.role ?? "viewer";
 
   return (
     <div className="space-y-5">
@@ -102,7 +104,7 @@ export default function Incidents() {
                 <tr><td colSpan={8} className="px-4 py-8 text-center" style={{ color: "var(--muted)" }}>No incidents found.</td></tr>
               )}
               {data?.items?.map((inc: any) => {
-                const thumb = snapshotUrl(inc.snapshot_path);
+                const hasThumb = Boolean(inc.snapshot_path);
                 return (
                   <tr key={inc.id} className="border-t transition-colors hover:bg-opacity-50"
                       style={{ borderColor: "var(--border)" }}>
@@ -117,9 +119,23 @@ export default function Incidents() {
                       {inc.confidence ? `${(inc.confidence * 100).toFixed(0)}%` : "—"}
                     </td>
                     <td className="px-4 py-3">
-                      {thumb ? (
-                        <button onClick={() => setModalImg(thumb)} className="relative group">
-                          <img src={thumb} alt="snapshot" className="w-12 h-9 object-cover rounded" />
+                      {hasThumb ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setModalSnap({
+                              snapshot_path: inc.snapshot_path,
+                              snapshot_path_full: inc.snapshot_path_full,
+                            })
+                          }
+                          className="relative group"
+                        >
+                          <SnapshotImage
+                            snapshotPath={inc.snapshot_path}
+                            snapshotPathFull={inc.snapshot_path_full}
+                            role={role}
+                            className="w-12 h-9 object-cover rounded"
+                          />
                           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded"
                                style={{ background: "rgba(0,0,0,.6)" }}>
                             <ZoomIn size={14} className="text-white" />
@@ -165,11 +181,19 @@ export default function Incidents() {
       </Card>
 
       {/* Snapshot Modal */}
-      {modalImg && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center"
-             style={{ background: "rgba(0,0,0,.8)" }}
-             onClick={() => setModalImg(null)}>
-          <img src={modalImg} alt="snapshot" className="max-w-4xl max-h-screen rounded-xl object-contain" />
+      {modalSnap && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,.8)" }}
+          onClick={() => setModalSnap(null)}
+        >
+          <SnapshotImage
+            snapshotPath={modalSnap.snapshot_path}
+            snapshotPathFull={modalSnap.snapshot_path_full}
+            role={role}
+            className="max-w-4xl max-h-screen rounded-xl object-contain"
+            alt="snapshot enlarged"
+          />
         </div>
       )}
     </div>

@@ -35,9 +35,12 @@ ZONES: list[str] = json.loads(_zones_raw)
 # Database
 DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/data/incidents.db")
 
-# Snapshots
+# Snapshots (public: privacy-blurred JPEGs served under /snapshots)
 SNAPSHOT_DIR: Path = BASE_DIR / os.getenv("SNAPSHOT_DIR", "snapshots")
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+# Unblurred copies (admin-only); not mounted as static files
+SNAPSHOT_DIR_FULL: Path = BASE_DIR / os.getenv("SNAPSHOT_DIR_FULL", "snapshots_private")
+SNAPSHOT_DIR_FULL.mkdir(parents=True, exist_ok=True)
 
 # Mock PIR
 MOCK_PIR_INTERVAL: int = int(os.getenv("MOCK_PIR_INTERVAL", "0"))
@@ -47,6 +50,49 @@ MODELS_DIR: Path = BASE_DIR / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 # yolov8s (small) — significantly better accuracy than nano with acceptable CPU speed
 YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", str(MODELS_DIR / "yolov8s.pt"))
+# Main COCO model inference size (smaller = faster, e.g. 512)
+YOLO_INFER_IMGSZ: int = int(os.getenv("YOLO_INFER_IMGSZ", "640"))
+# Directory or absolute path containing monkey YOLO weights (best.pt). Default: project ./best
+_monkey_dir = os.getenv("MONKEY_MODEL_DIR", "")
+MONKEY_MODEL_DIR: Path = (
+    Path(_monkey_dir) if _monkey_dir else (BASE_DIR / "best")
+)
+# Explicit file path overrides directory search
+MONKEY_MODEL_PATH: str = os.getenv("MONKEY_MODEL_PATH", "")
+# Specialist model: smaller imgsz keeps latency low when running two models per frame
+MONKEY_INFER_IMGSZ: int = int(os.getenv("MONKEY_INFER_IMGSZ", "416"))
+MONKEY_CONFIDENCE_THRESHOLD: float = float(os.getenv("MONKEY_CONFIDENCE_THRESHOLD", "0.55"))
+
+
+def resolve_monkey_weights_path() -> Path | None:
+    """
+    Locate Ultralytics-exported monkey weights (.pt).
+
+    Sharded PyTorch checkpoint folders (without .pt) cannot be loaded — export best.pt
+    from your training run into this folder or set MONKEY_MODEL_PATH to the file.
+    """
+    if MONKEY_MODEL_PATH.strip():
+        p = Path(MONKEY_MODEL_PATH)
+        if not p.is_absolute():
+            p = BASE_DIR / p
+        return p if p.is_file() else None
+    root = MONKEY_MODEL_DIR
+    if not root.is_absolute():
+        root = BASE_DIR / root
+    candidates = [
+        root / "best.pt",
+        root / "weights" / "best.pt",
+        MODELS_DIR / "monkey_best.pt",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+    if root.is_dir():
+        pts = sorted(root.rglob("*.pt"))
+        if pts:
+            return pts[0]
+    return None
+
 
 # Server
 HOST: str = os.getenv("HOST", "0.0.0.0")

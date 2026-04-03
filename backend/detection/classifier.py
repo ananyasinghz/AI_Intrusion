@@ -30,8 +30,10 @@ class FrameResult:
     primary_type: str        # "animal", "person", "motion", "clear"
     primary_label: str
     max_confidence: float | None
-    # Raw frame annotated with bounding boxes and privacy blur
+    # Annotated with bounding boxes + blurred person interiors (viewer / privacy stream)
     annotated_frame: np.ndarray = field(repr=False)
+    # Same annotations without blurring person regions (admin live stream)
+    annotated_frame_admin: np.ndarray = field(repr=False)
     # Privacy-only version (blur without annotation boxes)
     privacy_frame: np.ndarray = field(repr=False)
     # Whether this result passed the vote buffer (callers can check)
@@ -58,7 +60,12 @@ class Classifier:
         if has_motion and self._yolo.available:
             detections = self._yolo.detect(frame)
 
-        annotated = self._yolo.annotate(frame, detections) if detections else frame.copy()
+        if detections:
+            annotated = self._yolo.annotate(frame, detections, blur_interior=True)
+            annotated_admin = self._yolo.annotate(frame, detections, blur_interior=False)
+        else:
+            annotated = frame.copy()
+            annotated_admin = frame.copy()
         privacy_frame = self._yolo.blur_persons(frame, detections)
 
         raw_type, raw_label, max_conf = self._summarise(has_motion, detections)
@@ -81,6 +88,7 @@ class Classifier:
             primary_label=primary_label,
             max_confidence=max_conf,
             annotated_frame=annotated,
+            annotated_frame_admin=annotated_admin,
             privacy_frame=privacy_frame,
             vote_accepted=vote_accepted,
         )

@@ -27,7 +27,7 @@ def make_mock_yolo(detections: list[Detection], available: bool = True) -> YOLOD
     mock.available = available
     mock.detect.return_value = detections
     mock.blur_persons.side_effect = lambda frame, _dets: frame.copy()
-    mock.annotate.side_effect = lambda frame, _dets: frame.copy()
+    mock.annotate.side_effect = lambda frame, _dets, blur_interior=True: frame.copy()
     return mock
 
 
