@@ -1,12 +1,21 @@
 import json
 import os
+import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
+# Project root (folder containing `backend/`) — load .env here regardless of cwd
 BASE_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = BASE_DIR / ".env"
+if _ENV_FILE.exists() and _ENV_FILE.stat().st_size == 0:
+    warnings.warn(
+        f"{_ENV_FILE.name} is empty on disk (0 bytes). If you typed keys in the editor, "
+        "save the file (Ctrl+S) — Python only reads what is saved.",
+        UserWarning,
+        stacklevel=1,
+    )
+load_dotenv(_ENV_FILE)
 
 # Telegram
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -127,6 +136,24 @@ JWT_SECRET: str = os.getenv("JWT_SECRET", "CHANGE_THIS_IN_PRODUCTION_USE_A_LONG_
 JWT_ALGORITHM: str = "HS256"
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+# Groq (OpenAI-compatible API) — admin incident assistant
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+
+def refresh_groq_env() -> tuple[str, str]:
+    """
+    Re-read project .env and return (api_key, model).
+
+    Values above are fixed at import time. Uvicorn --reload usually does not restart
+    when only .env changes, so the assistant calls this before each Groq request.
+    """
+    load_dotenv(_ENV_FILE, override=True)
+    key = (os.getenv("GROQ_API_KEY") or "").strip()
+    model = (os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile").strip()
+    return key, model
+
 
 # Email (optional — alerts/digests)
 SMTP_HOST: str = os.getenv("SMTP_HOST", "")

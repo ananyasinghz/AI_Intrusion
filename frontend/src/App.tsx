@@ -15,6 +15,7 @@ import Zones from "./pages/Zones";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
+import Assistant from "./pages/Assistant";
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -92,6 +93,14 @@ export default function App() {
               element={
                 <ProtectedRoute adminOnly>
                   <Users />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="assistant"
+              element={
+                <ProtectedRoute adminOnly>
+                  <Assistant />
                 </ProtectedRoute>
               }
             />

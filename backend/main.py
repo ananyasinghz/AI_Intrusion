@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from backend.api.assistant import router as assistant_router
 from backend.api.incidents import router as incidents_router
 from backend.api.reports import router as reports_router
 from backend.api.stream import broadcast_event, broadcast_frame, router as stream_router
@@ -107,7 +108,11 @@ app = FastAPI(
 # In production, replace ["*"] with your frontend's actual origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -123,6 +128,7 @@ app.include_router(stream_router)
 app.include_router(zones_router)
 app.include_router(users_router)
 app.include_router(reports_router)
+app.include_router(assistant_router)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

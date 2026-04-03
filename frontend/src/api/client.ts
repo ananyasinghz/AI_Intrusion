@@ -79,6 +79,16 @@ export const usersApi = {
   delete: (id: number) => api.delete(`/api/users/${id}`),
 };
 
+export const assistantApi = {
+  chat: (message: string) =>
+    api.post<{
+      reply: string;
+      total: number;
+      incidents: unknown[];
+      filters_used: Record<string, unknown>;
+    }>("/api/assistant/chat", { message }),
+};
+
 export const reportsApi = {
   list: () => api.get("/api/reports"),
   generate: (data: object) => api.post("/api/reports/generate", data),
