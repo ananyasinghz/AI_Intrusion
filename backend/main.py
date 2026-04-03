@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from backend.api.approved_persons import router as approved_persons_router
 from backend.api.incidents import router as incidents_router
 from backend.api.reports import router as reports_router
 from backend.api.stream import broadcast_event, broadcast_frame, router as stream_router
@@ -28,6 +29,7 @@ from backend.auth.router import router as auth_router
 from backend.config import HOST, MOCK_PIR_INTERVAL, PORT, SNAPSHOT_DIR, ZONES
 from backend.database.db import SessionLocal, init_db, seed_admin_user, seed_default_zones
 from backend.detection.input_source import get_input_source
+from backend.detection.reid import ApprovedPersonsGallery
 from backend.pipeline import DetectionPipeline
 from backend.scheduler import start_scheduler, stop_scheduler
 from backend.simulator.mock_pir import MockPIRSimulator
@@ -47,14 +49,20 @@ async def lifespan(application: FastAPI):
     try:
         seed_default_zones(db)
         seed_admin_user(db)
+        # Load approved-persons whitelist into memory once at startup
+        approved_gallery = ApprovedPersonsGallery()
+        approved_gallery.load_from_db(db)
     finally:
         db.close()
     logger.info("Database ready. Default admin: admin / changeme")
+
+    application.state.approved_gallery = approved_gallery
 
     pipeline = DetectionPipeline(
         zone=ZONES[0] if ZONES else "Main Entrance",
         broadcast_callback=broadcast_event,
         frame_callback=broadcast_frame,
+        approved_gallery=approved_gallery,
     )
     application.state.pipeline = pipeline
 
@@ -116,6 +124,7 @@ app.include_router(stream_router)
 app.include_router(zones_router)
 app.include_router(users_router)
 app.include_router(reports_router)
+app.include_router(approved_persons_router)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

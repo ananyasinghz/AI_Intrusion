@@ -20,6 +20,9 @@ reportlab>=4.0.0
 # Scheduler & email
 APScheduler>=3.10.0
 aiosmtplib>=3.0.0
+# Face recognition (approved-persons whitelist)
+insightface>=0.7.3
+onnxruntime>=1.16.0
 # Dev / test
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

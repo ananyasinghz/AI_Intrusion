@@ -42,7 +42,11 @@ export function useWebSocket(maxEvents = 50) {
   const connect = useCallback(() => {
     // Avoid duplicate sockets when reconnect timer and manual connect overlap.
     const current = wsRef.current;
-    if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
+    if (
+      current &&
+      (current.readyState === WebSocket.OPEN ||
+        current.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
@@ -86,7 +90,9 @@ export function useWebSocket(maxEvents = 50) {
         if (msg.id) {
           pushEvent(msg as LiveEvent, maxEvents);
         }
-      } catch { /* ignore malformed messages */ }
+      } catch {
+        /* ignore malformed messages */
+      }
     };
 
     ws.onclose = () => {
@@ -99,7 +105,10 @@ export function useWebSocket(maxEvents = 50) {
 
       // Exponential backoff (max 10s) to reduce reconnect storms in dev.
       reconnectAttemptsRef.current += 1;
-      const backoffMs = Math.min(10_000, 1000 * (2 ** Math.min(reconnectAttemptsRef.current, 4)));
+      const backoffMs = Math.min(
+        10_000,
+        1000 * 2 ** Math.min(reconnectAttemptsRef.current, 4),
+      );
       reconnectTimer.current = setTimeout(connect, backoffMs);
     };
 

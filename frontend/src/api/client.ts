@@ -85,5 +85,16 @@ export const reportsApi = {
   download: (id: number) => api.get(`/api/reports/${id}/download`, { responseType: "blob" }),
 };
 
+export const approvedPersonsApi = {
+  list: () => api.get("/api/approved-persons"),
+  enroll: (name: string, image_b64: string, notes?: string) =>
+    api.post("/api/approved-persons/enroll", { name, image_b64, notes }),
+  batchEnroll: (persons: { name: string; image_b64: string; notes?: string }[]) =>
+    api.post("/api/approved-persons/batch-enroll", { persons }),
+  update: (id: number, data: { name?: string; notes?: string }) =>
+    api.patch(`/api/approved-persons/${id}`, data),
+  remove: (id: number) => api.delete(`/api/approved-persons/${id}`),
+};
+
 export const firePIR = (zone?: string) =>
   api.post("/api/pir/fire", null, { params: zone ? { zone } : {} });

@@ -39,7 +39,6 @@ export default function Dashboard() {
     return () => setFrameHandler(null);
   }, [setFrameHandler]);
 
-
   const { data: stats, refetch: refetchStats } = useQuery({
     queryKey: ["stats", 24],
     queryFn: () => incidentsApi.stats(24).then((r) => r.data),
@@ -73,14 +72,20 @@ export default function Dashboard() {
 
   const latestEvent = events[0];
   const zoneNames: string[] = zones?.map((z: any) => z.name) ?? [];
-  const maxHeat = Math.max(1, ...Object.values(heatmap ?? {}).map((v: any) => v.total ?? 0));
+  const maxHeat = Math.max(
+    1,
+    ...Object.values(heatmap ?? {}).map((v: any) => v.total ?? 0),
+  );
 
   function heatClass(count: number) {
     const ratio = count / maxHeat;
     if (ratio === 0) return { bg: "var(--bg3)", border: "var(--border)" };
-    if (ratio < 0.25) return { bg: "rgba(88,166,255,.1)", border: "var(--accent)" };
-    if (ratio < 0.5)  return { bg: "rgba(210,153,34,.15)", border: "var(--animal)" };
-    if (ratio < 0.75) return { bg: "rgba(248,81,73,.15)", border: "var(--person)" };
+    if (ratio < 0.25)
+      return { bg: "rgba(88,166,255,.1)", border: "var(--accent)" };
+    if (ratio < 0.5)
+      return { bg: "rgba(210,153,34,.15)", border: "var(--animal)" };
+    if (ratio < 0.75)
+      return { bg: "rgba(248,81,73,.15)", border: "var(--person)" };
     return { bg: "rgba(248,81,73,.35)", border: "var(--person)" };
   }
 
@@ -89,9 +94,21 @@ export default function Dashboard() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard value={stats?.total ?? "—"} label="Total (24h)" />
-        <StatCard value={stats?.by_type?.animal ?? 0} label="Animal" color="var(--animal)" />
-        <StatCard value={stats?.by_type?.person ?? 0} label="Person" color="var(--person)" />
-        <StatCard value={stats?.by_type?.motion ?? 0} label="Motion" color="var(--motion)" />
+        <StatCard
+          value={stats?.by_type?.animal ?? 0}
+          label="Animal"
+          color="var(--animal)"
+        />
+        <StatCard
+          value={stats?.by_type?.person ?? 0}
+          label="Person"
+          color="var(--person)"
+        />
+        <StatCard
+          value={stats?.by_type?.motion ?? 0}
+          label="Motion"
+          color="var(--motion)"
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
@@ -107,20 +124,33 @@ export default function Dashboard() {
               />
               {/* Overlay when no frames have arrived yet */}
               {!connected && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2"
-                     style={{ background: "rgba(0,0,0,.7)" }}>
-                  <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
-                       style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }} />
-                  <p className="text-xs" style={{ color: "var(--muted)" }}>Connecting…</p>
+                <div
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+                  style={{ background: "rgba(0,0,0,.7)" }}
+                >
+                  <div
+                    className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+                    style={{
+                      borderColor: "var(--accent)",
+                      borderTopColor: "transparent",
+                    }}
+                  />
+                  <p className="text-xs" style={{ color: "var(--muted)" }}>
+                    Connecting…
+                  </p>
                 </div>
               )}
               {latestEvent && (
                 <div className="absolute top-2 left-2">
                   <span
                     className="text-xs font-semibold px-2 py-1 rounded-md"
-                    style={{ background: "rgba(0,0,0,.7)", color: "var(--accent)" }}
+                    style={{
+                      background: "rgba(0,0,0,.7)",
+                      color: "var(--accent)",
+                    }}
                   >
-                    {typeIcon(latestEvent.detection_type)} {latestEvent.label} · {latestEvent.zone_name ?? latestEvent.zone}
+                    {typeIcon(latestEvent.detection_type)} {latestEvent.label} ·{" "}
+                    {latestEvent.zone_name ?? latestEvent.zone}
                   </span>
                 </div>
               )}
@@ -132,13 +162,25 @@ export default function Dashboard() {
             <div className="p-4">
               {latestEvent ? (
                 <div className="flex items-start gap-3">
-                  <span className="text-2xl">{typeIcon(latestEvent.detection_type)}</span>
+                  <span className="text-2xl">
+                    {typeIcon(latestEvent.detection_type)}
+                  </span>
                   <div>
-                    <p className="font-semibold text-sm" style={{ color: "var(--text)" }}>
+                    <p
+                      className="font-semibold text-sm"
+                      style={{ color: "var(--text)" }}
+                    >
                       {latestEvent.label}
                     </p>
-                    <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>
-                      {latestEvent.zone} · {formatDistanceToNow(new Date(latestEvent.timestamp + "Z"), { addSuffix: true })}
+                    <p
+                      className="text-xs mt-0.5"
+                      style={{ color: "var(--muted)" }}
+                    >
+                      {latestEvent.zone} ·{" "}
+                      {formatDistanceToNow(
+                        new Date(latestEvent.timestamp + "Z"),
+                        { addSuffix: true },
+                      )}
                     </p>
                     <div className="mt-1.5">
                       <TypePill type={latestEvent.detection_type} />
@@ -146,7 +188,9 @@ export default function Dashboard() {
                   </div>
                 </div>
               ) : (
-                <p className="text-sm" style={{ color: "var(--muted)" }}>No incidents yet.</p>
+                <p className="text-sm" style={{ color: "var(--muted)" }}>
+                  No incidents yet.
+                </p>
               )}
             </div>
           </Card>
@@ -158,15 +202,27 @@ export default function Dashboard() {
                 value={selectedZone}
                 onChange={(e) => setSelectedZone(e.target.value)}
                 className="w-full rounded-lg px-3 py-2 text-sm"
-                style={{ background: "var(--bg3)", border: "1px solid var(--border)", color: "var(--text)" }}
+                style={{
+                  background: "var(--bg3)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                }}
               >
                 <option value="">Random zone</option>
-                {zoneNames.map((z) => <option key={z} value={z}>{z}</option>)}
+                {zoneNames.map((z) => (
+                  <option key={z} value={z}>
+                    {z}
+                  </option>
+                ))}
               </select>
               <button
                 onClick={handleFirePIR}
                 className="w-full py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-80"
-                style={{ background: "rgba(210,153,34,.2)", color: "var(--animal)", border: "1px solid var(--animal)" }}
+                style={{
+                  background: "rgba(210,153,34,.2)",
+                  color: "var(--animal)",
+                  border: "1px solid var(--animal)",
+                }}
               >
                 🔔 Fire Mock PIR
               </button>
@@ -183,7 +239,12 @@ export default function Dashboard() {
           <Card title="Zone Heatmap (24h)">
             <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
               {zoneNames.length === 0 && (
-                <p className="col-span-4 text-sm" style={{ color: "var(--muted)" }}>No zones configured.</p>
+                <p
+                  className="col-span-4 text-sm"
+                  style={{ color: "var(--muted)" }}
+                >
+                  No zones configured.
+                </p>
               )}
               {zoneNames.map((zone) => {
                 const info = heatmap?.[zone] ?? {};
@@ -193,14 +254,39 @@ export default function Dashboard() {
                   <div
                     key={zone}
                     className="rounded-xl p-4 text-center"
-                    style={{ background: style.bg, border: `1px solid ${style.border}` }}
+                    style={{
+                      background: style.bg,
+                      border: `1px solid ${style.border}`,
+                    }}
                   >
-                    <p className="text-xs mb-1 truncate" style={{ color: "var(--muted)" }}>{zone}</p>
-                    <p className="text-2xl font-bold" style={{ color: "var(--text)" }}>{count}</p>
+                    <p
+                      className="text-xs mb-1 truncate"
+                      style={{ color: "var(--muted)" }}
+                    >
+                      {zone}
+                    </p>
+                    <p
+                      className="text-2xl font-bold"
+                      style={{ color: "var(--text)" }}
+                    >
+                      {count}
+                    </p>
                     <div className="text-xs mt-1 space-x-1">
-                      {info.animal ? <span style={{ color: "var(--animal)" }}>🐾{info.animal}</span> : null}
-                      {info.person ? <span style={{ color: "var(--person)" }}>🚶{info.person}</span> : null}
-                      {info.motion ? <span style={{ color: "var(--motion)" }}>⚠️{info.motion}</span> : null}
+                      {info.animal ? (
+                        <span style={{ color: "var(--animal)" }}>
+                          🐾{info.animal}
+                        </span>
+                      ) : null}
+                      {info.person ? (
+                        <span style={{ color: "var(--person)" }}>
+                          🚶{info.person}
+                        </span>
+                      ) : null}
+                      {info.motion ? (
+                        <span style={{ color: "var(--motion)" }}>
+                          ⚠️{info.motion}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -209,14 +295,23 @@ export default function Dashboard() {
           </Card>
 
           {/* Live Event Feed */}
-          <Card title="Live Event Feed" action={
-            <span className="text-xs" style={{ color: connected ? "var(--motion)" : "var(--muted)" }}>
-              {connected ? "● Live" : "● Offline"}
-            </span>
-          }>
+          <Card
+            title="Live Event Feed"
+            action={
+              <span
+                className="text-xs"
+                style={{ color: connected ? "var(--motion)" : "var(--muted)" }}
+              >
+                {connected ? "● Live" : "● Offline"}
+              </span>
+            }
+          >
             <div className="divide-y" style={{ borderColor: "var(--border)" }}>
               {events.length === 0 && (
-                <p className="px-4 py-5 text-sm" style={{ color: "var(--muted)" }}>
+                <p
+                  className="px-4 py-5 text-sm"
+                  style={{ color: "var(--muted)" }}
+                >
                   Waiting for events…
                 </p>
               )}
@@ -225,20 +320,30 @@ export default function Dashboard() {
                   <span className="text-lg">{typeIcon(ev.detection_type)}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="text-sm font-medium truncate" style={{ color: "var(--text)" }}>
+                      <p
+                        className="text-sm font-medium truncate"
+                        style={{ color: "var(--text)" }}
+                      >
                         {ev.label}
                       </p>
                       {ev.is_repeat_visitor && (
                         <span
                           className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
-                          style={{ background: "rgba(248,81,73,.15)", color: "#f85149", border: "1px solid #f8514960" }}
+                          style={{
+                            background: "rgba(248,81,73,.15)",
+                            color: "#f85149",
+                            border: "1px solid #f8514960",
+                          }}
                         >
                           repeat
                         </span>
                       )}
                     </div>
                     <p className="text-xs" style={{ color: "var(--muted)" }}>
-                      {ev.zone_name ?? ev.zone} · {formatDistanceToNow(new Date(ev.timestamp + "Z"), { addSuffix: true })}
+                      {ev.zone_name ?? ev.zone} ·{" "}
+                      {formatDistanceToNow(new Date(ev.timestamp + "Z"), {
+                        addSuffix: true,
+                      })}
                     </p>
                   </div>
                   <TypePill type={ev.detection_type} />

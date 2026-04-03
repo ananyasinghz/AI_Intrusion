@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, AlertTriangle, BarChart2, Map,
-  FileText, Settings, Users, ShieldAlert,
+  FileText, Settings, Users, ShieldAlert, UserCheck,
 } from "lucide-react";
 import { useAuthStore } from "../../store/authStore";
 
@@ -14,6 +14,7 @@ const navItems = [
 ];
 
 const adminItems = [
+  { to: "/approved-persons", icon: UserCheck, label: "Approved Persons" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/users", icon: Users, label: "Users" },
 ];

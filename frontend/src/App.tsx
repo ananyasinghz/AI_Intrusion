@@ -15,6 +15,7 @@ import Zones from "./pages/Zones";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
+import ApprovedPersons from "./pages/ApprovedPersons";
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -92,6 +93,14 @@ export default function App() {
               element={
                 <ProtectedRoute adminOnly>
                   <Users />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="approved-persons"
+              element={
+                <ProtectedRoute adminOnly>
+                  <ApprovedPersons />
                 </ProtectedRoute>
               }
             />

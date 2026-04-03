@@ -135,6 +135,8 @@ class Incident(Base):
     appearance_id = Column(String(20), nullable=True)
     # True if appearance_id matched a previously seen person (repeat visitor)
     is_repeat_visitor = Column(Boolean, default=False, nullable=False)
+    # True if matched the persistent approved-persons whitelist — alert suppressed
+    is_approved = Column(Boolean, default=False, nullable=True)
 
     zone_rel = relationship("Zone", back_populates="incidents")
 
@@ -154,6 +156,35 @@ class Incident(Base):
             "duration_seconds": self.duration_seconds,
             "appearance_id": self.appearance_id,
             "is_repeat_visitor": self.is_repeat_visitor,
+            "is_approved": bool(self.is_approved),
+        }
+
+
+class ApprovedPerson(Base):
+    """Persistent whitelist of known people (students/teachers) who should not trigger alerts."""
+
+    __tablename__ = "approved_persons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    # JSON-encoded 512-float ArcFace embedding (L2-normalised)
+    descriptor = Column(Text, nullable=False)
+    notes = Column(Text, nullable=True)
+    enrolled_at = Column(DateTime, default=datetime.utcnow)
+    enrolled_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Which face model produced this embedding (for future migration tracking)
+    embedding_model = Column(String(50), nullable=True, default="arcface_buffalo_s")
+
+    enrolled_by_user = relationship("User", foreign_keys=[enrolled_by])
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "notes": self.notes,
+            "enrolled_at": self.enrolled_at.isoformat() if self.enrolled_at else None,
+            "enrolled_by": self.enrolled_by,
+            "embedding_model": self.embedding_model,
         }
 
 

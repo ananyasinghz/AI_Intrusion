@@ -44,7 +44,7 @@ from backend.detection.input_source import InputSource, get_input_source
 from backend.detection.loitering import LoiteringDetector
 from backend.detection.motion import MotionDetector
 from backend.detection.optical_flow import OpticalFlowAnomalyDetector
-from backend.detection.reid import PersonReIDTracker
+from backend.detection.reid import ApprovedPersonsGallery, PersonReIDTracker, extract_clothing_descriptor
 from backend.detection.yolo_detector import YOLODetector
 from backend.detection.zone_crossing import ZoneCrossingDetector
 
@@ -72,6 +72,7 @@ class DetectionPipeline:
         zone: str | None = None,
         broadcast_callback=None,
         frame_callback=None,
+        approved_gallery: ApprovedPersonsGallery | None = None,
     ) -> None:
         self._zone = zone or (ZONES[0] if ZONES else "Zone 1")
         self._motion_detector = MotionDetector()
@@ -81,6 +82,7 @@ class DetectionPipeline:
         self._zone_crossing = ZoneCrossingDetector()
         self._optical_flow = OpticalFlowAnomalyDetector()
         self._reid = PersonReIDTracker()
+        self._approved_gallery = approved_gallery or ApprovedPersonsGallery()
         self._alerter = TelegramAlerter()
         self._broadcast = broadcast_callback
         # Called with raw JPEG bytes of the annotated frame at ~10fps
@@ -238,27 +240,41 @@ class DetectionPipeline:
         if not self._is_cooldown_ok(self._zone, dtype):
             return
 
-        # Take snapshot only on the first detection in the cooldown window
-        snapshot_path = self._save_snapshot(result.privacy_frame, dtype)
-
-        # Re-ID for person detections
         appearance_id: str | None = None
         is_repeat: bool = False
+        is_approved: bool = False
+
         if dtype == "person" and result.detections:
-            # Use the bounding box of the highest-confidence person detection
             person_dets = [d for d in result.detections if d.detection_type == "person"]
             if person_dets:
                 best = max(person_dets, key=lambda d: d.confidence)
-                is_repeat, appearance_id, visit_count = self._reid.check_and_update(frame, best.bbox)
-                if is_repeat:
-                    logger.info(
-                        "Repeat visitor detected in %s (appearance_id=%s, visit=%d)",
-                        self._zone, appearance_id, visit_count,
+                # Face recognition check — identify approved persons regardless of outfit
+                embedding = self._approved_gallery.get_face_embedding(frame, best.bbox)
+                if embedding is not None:
+                    is_approved = self._approved_gallery.is_approved(embedding)
+                if not is_approved:
+                    # Clothing-based repeat-visitor tracking (unchanged — runs only for non-approved)
+                    descriptor = extract_clothing_descriptor(frame, best.bbox)
+                    is_repeat, appearance_id, visit_count = self._reid.check_and_update(
+                        frame, best.bbox, descriptor=descriptor
                     )
+                    if is_repeat:
+                        logger.info(
+                            "Repeat visitor detected in %s (appearance_id=%s, visit=%d)",
+                            self._zone, appearance_id, visit_count,
+                        )
+                else:
+                    logger.debug("Approved person (face match) in %s — alert suppressed", self._zone)
 
-        label = result.primary_label
-        if is_repeat:
+        # No snapshot saved for approved persons (saves disk, less intrusive)
+        snapshot_path = None if is_approved else self._save_snapshot(result.privacy_frame, dtype)
+
+        if is_approved:
+            label = "approved visitor"
+        elif is_repeat:
             label = f"{result.primary_label} [repeat visitor]"
+        else:
+            label = result.primary_label
 
         await self._log_and_alert(
             zone=self._zone,
@@ -269,6 +285,8 @@ class DetectionPipeline:
             source="camera",
             appearance_id=appearance_id,
             is_repeat_visitor=is_repeat,
+            is_approved=is_approved,
+            skip_alert=is_approved,
         )
 
     async def handle_pir_event(self, zone: str) -> None:
@@ -298,11 +316,13 @@ class DetectionPipeline:
         duration_seconds: float | None = None,
         appearance_id: str | None = None,
         is_repeat_visitor: bool = False,
+        is_approved: bool = False,
+        skip_alert: bool = False,
     ) -> None:
         incident = self._save_to_db(
             zone, detection_type, label, confidence,
             snapshot_path, source, track_id, duration_seconds,
-            appearance_id, is_repeat_visitor,
+            appearance_id, is_repeat_visitor, is_approved,
         )
 
         if self._broadcast:
@@ -311,15 +331,16 @@ class DetectionPipeline:
             except Exception:
                 logger.exception("WebSocket broadcast failed")
 
-        asyncio.create_task(
-            self._alerter.send_alert(
-                zone=zone,
-                detection_type=detection_type,
-                label=label,
-                confidence=confidence,
-                snapshot_path=snapshot_path,
+        if not skip_alert:
+            asyncio.create_task(
+                self._alerter.send_alert(
+                    zone=zone,
+                    detection_type=detection_type,
+                    label=label,
+                    confidence=confidence,
+                    snapshot_path=snapshot_path,
+                )
             )
-        )
 
     def _save_to_db(
         self,
@@ -333,6 +354,7 @@ class DetectionPipeline:
         duration_seconds: float | None = None,
         appearance_id: str | None = None,
         is_repeat_visitor: bool = False,
+        is_approved: bool = False,
     ) -> Incident:
         from backend.database.models import Zone as ZoneModel
         db = SessionLocal()
@@ -351,6 +373,7 @@ class DetectionPipeline:
                 duration_seconds=duration_seconds,
                 appearance_id=appearance_id,
                 is_repeat_visitor=is_repeat_visitor,
+                is_approved=is_approved,
             )
             db.add(incident)
             db.commit()
