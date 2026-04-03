@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { incidentsApi, zonesApi, firePIR } from "../api/client";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { useLiveEventsStore } from "../store/liveEventsStore";
 import { Card, StatCard } from "../components/UI/Card";
 import { TypePill, typeIcon } from "../components/UI/TypePill";
 import { formatDistanceToNow } from "date-fns";
@@ -9,8 +10,35 @@ import toast from "react-hot-toast";
 
 export default function Dashboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { events, connected } = useWebSocket(20, canvasRef);
+  // Separate selectors — object literals from Zustand cause a new snapshot each render
+  // and trigger "Maximum update depth" with useSyncExternalStore (React 18).
+  const events = useLiveEventsStore((s) => s.events);
+  const setFrameHandler = useLiveEventsStore((s) => s.setFrameHandler);
+  const { connected } = useWebSocket(20);
   const [selectedZone, setSelectedZone] = useState("");
+
+  // Register a frame renderer for the shared websocket connection.
+  // This prevents the event feed list from resetting on navigation.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const handler = (base64: string) => {
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = `data:image/jpeg;base64,${base64}`;
+    };
+
+    setFrameHandler(handler);
+    return () => setFrameHandler(null);
+  }, [setFrameHandler]);
+
 
   const { data: stats, refetch: refetchStats } = useQuery({
     queryKey: ["stats", 24],

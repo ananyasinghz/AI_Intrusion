@@ -6,11 +6,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      "/api": "http://localhost:8000",
-      "/auth": "http://localhost:8000",
-      "/stream": "http://localhost:8000",
-      "/ws": { target: "ws://localhost:8000", ws: true },
-      "/snapshots": "http://localhost:8000",
+      "/api": "http://127.0.0.1:8000",
+      "/auth": "http://127.0.0.1:8000",
+      "/stream": "http://127.0.0.1:8000",
+      "/ws": { target: "ws://127.0.0.1:8000", ws: true },
+      "/snapshots": "http://127.0.0.1:8000",
     },
   },
 });

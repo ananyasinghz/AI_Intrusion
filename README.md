@@ -78,7 +78,7 @@ npm run build      # Production build → frontend/dist/
 | `SMTP_USER` | — | Email username |
 | `SMTP_PASSWORD` | — | Email app password |
 | `ADMIN_EMAIL` | — | Recipient for weekly PDF reports |
-| `ZONES` | `Main Entrance,Back Gate,Corridor` | Comma-separated zone names |
+| `ZONES` | `["Main Entrance","Corridor","Backyard","Side Gate"]` | JSON list of zone names |
 | `DATA_RETENTION_DAYS` | `30` | Auto-delete incidents older than N days (0 = keep forever) |
 
 ---

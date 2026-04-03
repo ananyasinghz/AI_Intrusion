@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
+import { useLiveEventsStore } from "../store/liveEventsStore";
 
 export interface LiveEvent {
   id: number;
@@ -17,27 +18,44 @@ export interface LiveEvent {
 /**
  * Connects to /ws/live and handles two message types:
  *   { type: "incident", ...fields }  → pushed into the events array
- *   { type: "frame",    data: "<b64 JPEG>" } → drawn onto canvasRef (if provided)
+ *   { type: "frame",    data: "<b64 JPEG>" } → forwarded to the current frame handler (if any)
  *
  * Frames arrive at ~10 fps from the backend pipeline and are rendered
- * onto a <canvas> element, replacing the old MJPEG <img> approach.
+ * by whoever registers a frame handler (e.g. Dashboard).
  */
-export function useWebSocket(maxEvents = 50, canvasRef?: React.RefObject<HTMLCanvasElement | null>) {
-  const [events, setEvents] = useState<LiveEvent[]>([]);
-  const [connected, setConnected] = useState(false);
+export function useWebSocket(maxEvents = 50) {
+  const events = useLiveEventsStore((s) => s.events);
+  const connected = useLiveEventsStore((s) => s.connected);
+  const setConnected = useLiveEventsStore((s) => s.setConnected);
+  const pushEvent = useLiveEventsStore((s) => s.pushEvent);
+
+  const frameHandlerRef = useRef<((base64Jpeg: string) => void) | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
-  // Keep canvasRef stable in the closure
-  const canvasRefRef = useRef(canvasRef);
-  canvasRefRef.current = canvasRef;
+  const mountedRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const frameHandler = useLiveEventsStore((s) => s.frameHandler);
+  useEffect(() => {
+    frameHandlerRef.current = frameHandler;
+  }, [frameHandler]);
 
   const connect = useCallback(() => {
+    // Avoid duplicate sockets when reconnect timer and manual connect overlap.
+    const current = wsRef.current;
+    if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    // In dev, Vite proxies /ws → ws://localhost:8000
-    const ws = new WebSocket(`${proto}://${window.location.host}/ws/live`);
+    // Avoid Vite WS proxy instability in dev by connecting directly to backend.
+    const wsUrl = import.meta.env.DEV
+      ? "ws://127.0.0.1:8000/ws/live"
+      : `${proto}://${window.location.host}/ws/live`;
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      reconnectAttemptsRef.current = 0;
       setConnected(true);
       const ping = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send("ping");
@@ -50,20 +68,8 @@ export function useWebSocket(maxEvents = 50, canvasRef?: React.RefObject<HTMLCan
         const msg = JSON.parse(data);
 
         if (msg.type === "frame" && msg.data) {
-          // Render the JPEG frame onto the canvas
-          const canvas = canvasRefRef.current?.current;
-          if (canvas) {
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              const img = new Image();
-              img.onload = () => {
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-                ctx.drawImage(img, 0, 0);
-              };
-              img.src = `data:image/jpeg;base64,${msg.data}`;
-            }
-          }
+          const handler = frameHandlerRef.current;
+          if (handler) handler(msg.data);
           return;
         }
 
@@ -71,31 +77,43 @@ export function useWebSocket(maxEvents = 50, canvasRef?: React.RefObject<HTMLCan
           // Strip the type envelope before storing
           const { type: _t, ...event } = msg;
           if (event.id) {
-            setEvents((prev) => [event as LiveEvent, ...prev].slice(0, maxEvents));
+            pushEvent(event as LiveEvent, maxEvents);
           }
           return;
         }
 
         // Legacy: messages without a type field are treated as incidents
         if (msg.id) {
-          setEvents((prev) => [msg as LiveEvent, ...prev].slice(0, maxEvents));
+          pushEvent(msg as LiveEvent, maxEvents);
         }
       } catch { /* ignore malformed messages */ }
     };
 
     ws.onclose = () => {
+      // Ignore stale sockets after a newer socket replaced this one.
+      if (wsRef.current !== ws) return;
       setConnected(false);
-      reconnectTimer.current = setTimeout(connect, 3_000);
+
+      // Don't reconnect after unmount/cleanup.
+      if (!mountedRef.current) return;
+
+      // Exponential backoff (max 10s) to reduce reconnect storms in dev.
+      reconnectAttemptsRef.current += 1;
+      const backoffMs = Math.min(10_000, 1000 * (2 ** Math.min(reconnectAttemptsRef.current, 4)));
+      reconnectTimer.current = setTimeout(connect, backoffMs);
     };
 
     ws.onerror = () => ws.close();
   }, [maxEvents]);
 
   useEffect(() => {
+    mountedRef.current = true;
     connect();
     return () => {
+      mountedRef.current = false;
       clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [connect]);
 

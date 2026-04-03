@@ -370,7 +370,9 @@ class DetectionPipeline:
             filename = f"{detection_type}_{self._zone.replace(' ', '_')}_{ts}.jpg"
             path = SNAPSHOT_DIR / filename
             cv2.imwrite(str(path), frame)
-            return str(path)
+            # Store only the filename so the /snapshots/ static route works
+            # regardless of where the project directory lives on disk.
+            return filename
         except Exception:
             logger.exception("Failed to save snapshot")
             return None
