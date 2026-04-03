@@ -39,6 +39,7 @@ export default function Dashboard() {
     return () => setFrameHandler(null);
   }, [setFrameHandler]);
 
+
   const { data: stats, refetch: refetchStats } = useQuery({
     queryKey: ["stats", 24],
     queryFn: () => incidentsApi.stats(24).then((r) => r.data),

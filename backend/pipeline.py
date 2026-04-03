@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 from backend.alerts.telegram_bot import TelegramAlerter
-from backend.config import SNAPSHOT_DIR, ZONES
+from backend.config import SNAPSHOT_DIR, SNAPSHOT_DIR_FULL, ZONES
 from backend.database.db import SessionLocal
 from backend.database.models import Incident
 from backend.detection.classifier import Classifier
@@ -125,8 +125,11 @@ class DetectionPipeline:
                 has_motion, bboxes = self._motion_detector.detect(frame)
                 result = self._classifier.classify(frame, has_motion)
 
-                # Broadcast annotated frame at ~10 fps over WebSocket
-                await self._maybe_broadcast_frame(result.annotated_frame)
+                # Broadcast annotated frames at ~10 fps (admin vs viewer over WebSocket)
+                await self._maybe_broadcast_frame(
+                    result.annotated_frame,
+                    result.annotated_frame_admin,
+                )
 
                 # Primary detection (animal / person / motion)
                 if result.primary_type not in ("clear",):
@@ -136,13 +139,16 @@ class DetectionPipeline:
                 if result.detections:
                     for ev in self._loitering.update(result.detections):
                         if self._is_cooldown_ok(self._zone, "loitering"):
-                            snap = self._save_snapshot(result.privacy_frame, "loitering")
+                            snap, snap_full = self._save_snapshot(
+                                frame, result.privacy_frame, "loitering", result.detections,
+                            )
                             await self._log_and_alert(
                                 zone=self._zone,
                                 detection_type="loitering",
                                 label=f"{ev['label']} (loitering {ev['duration_seconds']:.0f}s)",
                                 confidence=None,
                                 snapshot_path=snap,
+                                snapshot_path_full=snap_full,
                                 source="camera",
                                 track_id=ev["track_id"],
                                 duration_seconds=ev["duration_seconds"],
@@ -152,13 +158,16 @@ class DetectionPipeline:
                 if result.detections:
                     for ev in self._zone_crossing.update(result.detections):
                         if self._is_cooldown_ok(self._zone, "zone_crossing"):
-                            snap = self._save_snapshot(result.privacy_frame, "zone_crossing")
+                            snap, snap_full = self._save_snapshot(
+                                frame, result.privacy_frame, "zone_crossing", result.detections,
+                            )
                             await self._log_and_alert(
                                 zone=self._zone,
                                 detection_type="zone_crossing",
                                 label=f"{ev['label']} ({ev['direction']})",
                                 confidence=None,
                                 snapshot_path=snap,
+                                snapshot_path_full=snap_full,
                                 source="camera",
                                 track_id=ev["track_id"],
                             )
@@ -174,13 +183,16 @@ class DetectionPipeline:
                     if self._flow_strike_count >= OPTICAL_FLOW_MIN_FRAMES:
                         if self._is_cooldown_ok(self._zone, "abnormal_activity"):
                             label = " + ".join(anomalies)
-                            snap = self._save_snapshot(result.privacy_frame, "abnormal_activity")
+                            snap, snap_full = self._save_snapshot(
+                                frame, result.privacy_frame, "abnormal_activity", result.detections,
+                            )
                             await self._log_and_alert(
                                 zone=self._zone,
                                 detection_type="abnormal_activity",
                                 label=label,
                                 confidence=None,
                                 snapshot_path=snap,
+                                snapshot_path_full=snap_full,
                                 source="camera",
                             )
                             self._flow_strike_count = 0
@@ -202,8 +214,12 @@ class DetectionPipeline:
 
     # ── Frame broadcast ───────────────────────────────────────────────────────
 
-    async def _maybe_broadcast_frame(self, frame: np.ndarray) -> None:
-        """Encode and broadcast the annotated frame at a capped rate (~10 fps)."""
+    async def _maybe_broadcast_frame(
+        self,
+        frame_viewer: np.ndarray,
+        frame_admin: np.ndarray,
+    ) -> None:
+        """Encode and broadcast annotated frames at a capped rate (~10 fps)."""
         if self._frame_cb is None:
             return
         now = time.monotonic()
@@ -211,9 +227,10 @@ class DetectionPipeline:
             return
         self._last_frame_broadcast = now
         try:
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-            if ok:
-                await self._frame_cb(buf.tobytes())
+            ok_v, buf_v = cv2.imencode(".jpg", frame_viewer, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            ok_a, buf_a = cv2.imencode(".jpg", frame_admin, [cv2.IMWRITE_JPEG_QUALITY, 60])
+            if ok_v and ok_a:
+                await self._frame_cb(buf_v.tobytes(), buf_a.tobytes())
         except Exception:
             logger.debug("Frame broadcast skipped (encode error)")
 
@@ -267,7 +284,12 @@ class DetectionPipeline:
                     logger.debug("Approved person (face match) in %s — alert suppressed", self._zone)
 
         # No snapshot saved for approved persons (saves disk, less intrusive)
-        snapshot_path = None if is_approved else self._save_snapshot(result.privacy_frame, dtype)
+        if is_approved:
+            snapshot_path, snapshot_path_full = None, None
+        else:
+            snapshot_path, snapshot_path_full = self._save_snapshot(
+                frame, result.privacy_frame, dtype, result.detections
+            )
 
         if is_approved:
             label = "approved visitor"
@@ -282,6 +304,7 @@ class DetectionPipeline:
             label=label,
             confidence=result.max_confidence,
             snapshot_path=snapshot_path,
+            snapshot_path_full=snapshot_path_full,
             source="camera",
             appearance_id=appearance_id,
             is_repeat_visitor=is_repeat,
@@ -318,10 +341,11 @@ class DetectionPipeline:
         is_repeat_visitor: bool = False,
         is_approved: bool = False,
         skip_alert: bool = False,
+        snapshot_path_full: str | None = None,
     ) -> None:
         incident = self._save_to_db(
             zone, detection_type, label, confidence,
-            snapshot_path, source, track_id, duration_seconds,
+            snapshot_path, snapshot_path_full, source, track_id, duration_seconds,
             appearance_id, is_repeat_visitor, is_approved,
         )
 
@@ -349,6 +373,7 @@ class DetectionPipeline:
         label: str,
         confidence: float | None,
         snapshot_path: str | None,
+        snapshot_path_full: str | None,
         source: str,
         track_id: str | None = None,
         duration_seconds: float | None = None,
@@ -368,6 +393,7 @@ class DetectionPipeline:
                 label=label,
                 confidence=confidence,
                 snapshot_path=snapshot_path,
+                snapshot_path_full=snapshot_path_full,
                 source=source,
                 track_id=track_id,
                 duration_seconds=duration_seconds,
@@ -387,18 +413,32 @@ class DetectionPipeline:
         finally:
             db.close()
 
-    def _save_snapshot(self, frame: np.ndarray, detection_type: str) -> str | None:
+    def _save_snapshot(
+        self,
+        raw_frame: np.ndarray,
+        privacy_frame: np.ndarray,
+        tag: str,
+        detections: list,
+    ) -> tuple[str | None, str | None]:
+        """
+        Save privacy (blurred) snapshot for all viewers; when a person is present,
+        also save an unblurred copy for admin-only access.
+        """
+        has_person = any(d.detection_type == "person" for d in detections)
         try:
             ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{detection_type}_{self._zone.replace(' ', '_')}_{ts}.jpg"
-            path = SNAPSHOT_DIR / filename
-            cv2.imwrite(str(path), frame)
-            # Store only the filename so the /snapshots/ static route works
-            # regardless of where the project directory lives on disk.
-            return filename
+            base = f"{tag}_{self._zone.replace(' ', '_')}_{ts}"
+            blur_name = f"{base}.jpg"
+            path_blur = SNAPSHOT_DIR / blur_name
+            cv2.imwrite(str(path_blur), privacy_frame)
+            full_name: str | None = None
+            if has_person:
+                full_name = f"{base}_full.jpg"
+                cv2.imwrite(str(SNAPSHOT_DIR_FULL / full_name), raw_frame)
+            return blur_name, full_name
         except Exception:
             logger.exception("Failed to save snapshot")
-            return None
+            return None, None
 
     def _load_tripwire(self) -> None:
         try:

@@ -1,12 +1,21 @@
 import json
 import os
+import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
+# Project root (folder containing `backend/`) — load .env here regardless of cwd
 BASE_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = BASE_DIR / ".env"
+if _ENV_FILE.exists() and _ENV_FILE.stat().st_size == 0:
+    warnings.warn(
+        f"{_ENV_FILE.name} is empty on disk (0 bytes). If you typed keys in the editor, "
+        "save the file (Ctrl+S) — Python only reads what is saved.",
+        UserWarning,
+        stacklevel=1,
+    )
+load_dotenv(_ENV_FILE)
 
 # Telegram
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -33,11 +42,38 @@ _zones_raw = os.getenv("ZONES", '["Main Entrance", "Corridor", "Backyard", "Side
 ZONES: list[str] = json.loads(_zones_raw)
 
 # Database
-DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/data/incidents.db")
+def _ensure_sqlite_parent_dir(url: str) -> None:
+    """Create parent folder for SQLite file paths (fixes 'unable to open database file')."""
+    if not url.startswith("sqlite"):
+        return
+    try:
+        from sqlalchemy.engine.url import make_url
 
-# Snapshots
+        u = make_url(url)
+        if u.database in (None, "", ":memory:"):
+            return
+        path = Path(u.database)
+        if not path.is_absolute():
+            path = (BASE_DIR / path).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        # Fallback: default data dir
+        (BASE_DIR / "data").mkdir(parents=True, exist_ok=True)
+
+
+_default_db = (BASE_DIR / "data" / "incidents.db").resolve()
+DATABASE_URL: str = os.getenv(
+    "DATABASE_URL",
+    f"sqlite:///{_default_db.as_posix()}",
+)
+_ensure_sqlite_parent_dir(DATABASE_URL)
+
+# Snapshots (public: privacy-blurred JPEGs served under /snapshots)
 SNAPSHOT_DIR: Path = BASE_DIR / os.getenv("SNAPSHOT_DIR", "snapshots")
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+# Unblurred copies (admin-only); not mounted as static files
+SNAPSHOT_DIR_FULL: Path = BASE_DIR / os.getenv("SNAPSHOT_DIR_FULL", "snapshots_private")
+SNAPSHOT_DIR_FULL.mkdir(parents=True, exist_ok=True)
 
 # Mock PIR
 MOCK_PIR_INTERVAL: int = int(os.getenv("MOCK_PIR_INTERVAL", "0"))
@@ -47,6 +83,49 @@ MODELS_DIR: Path = BASE_DIR / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 # yolov8s (small) — significantly better accuracy than nano with acceptable CPU speed
 YOLO_MODEL_PATH: str = os.getenv("YOLO_MODEL_PATH", str(MODELS_DIR / "yolov8s.pt"))
+# Main COCO model inference size (smaller = faster, e.g. 512)
+YOLO_INFER_IMGSZ: int = int(os.getenv("YOLO_INFER_IMGSZ", "640"))
+# Directory or absolute path containing monkey YOLO weights (best.pt). Default: project ./best
+_monkey_dir = os.getenv("MONKEY_MODEL_DIR", "")
+MONKEY_MODEL_DIR: Path = (
+    Path(_monkey_dir) if _monkey_dir else (BASE_DIR / "best")
+)
+# Explicit file path overrides directory search
+MONKEY_MODEL_PATH: str = os.getenv("MONKEY_MODEL_PATH", "")
+# Specialist model: smaller imgsz keeps latency low when running two models per frame
+MONKEY_INFER_IMGSZ: int = int(os.getenv("MONKEY_INFER_IMGSZ", "416"))
+MONKEY_CONFIDENCE_THRESHOLD: float = float(os.getenv("MONKEY_CONFIDENCE_THRESHOLD", "0.55"))
+
+
+def resolve_monkey_weights_path() -> Path | None:
+    """
+    Locate Ultralytics-exported monkey weights (.pt).
+
+    Sharded PyTorch checkpoint folders (without .pt) cannot be loaded — export best.pt
+    from your training run into this folder or set MONKEY_MODEL_PATH to the file.
+    """
+    if MONKEY_MODEL_PATH.strip():
+        p = Path(MONKEY_MODEL_PATH)
+        if not p.is_absolute():
+            p = BASE_DIR / p
+        return p if p.is_file() else None
+    root = MONKEY_MODEL_DIR
+    if not root.is_absolute():
+        root = BASE_DIR / root
+    candidates = [
+        root / "best.pt",
+        root / "weights" / "best.pt",
+        MODELS_DIR / "monkey_best.pt",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+    if root.is_dir():
+        pts = sorted(root.rglob("*.pt"))
+        if pts:
+            return pts[0]
+    return None
+
 
 # Server
 HOST: str = os.getenv("HOST", "0.0.0.0")
@@ -57,6 +136,24 @@ JWT_SECRET: str = os.getenv("JWT_SECRET", "CHANGE_THIS_IN_PRODUCTION_USE_A_LONG_
 JWT_ALGORITHM: str = "HS256"
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+# Groq (OpenAI-compatible API) — admin incident assistant
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+
+def refresh_groq_env() -> tuple[str, str]:
+    """
+    Re-read project .env and return (api_key, model).
+
+    Values above are fixed at import time. Uvicorn --reload usually does not restart
+    when only .env changes, so the assistant calls this before each Groq request.
+    """
+    load_dotenv(_ENV_FILE, override=True)
+    key = (os.getenv("GROQ_API_KEY") or "").strip()
+    model = (os.getenv("GROQ_MODEL") or "llama-3.3-70b-versatile").strip()
+    return key, model
+
 
 # Email (optional — alerts/digests)
 SMTP_HOST: str = os.getenv("SMTP_HOST", "")

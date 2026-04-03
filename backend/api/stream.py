@@ -10,8 +10,8 @@ WebSocket /ws/live carries TWO message types over a single connection:
   2. Live video frames (JSON):
        { "type": "frame", "data": "<base64 JPEG>" }
      Sent by the pipeline at ~10 fps. The frontend renders these onto a
-     <canvas> element. This completely replaces the old MJPEG /stream/video
-     endpoint, which had browser-compatibility and event-loop-blocking issues.
+     <canvas> element. Clients must pass ?token=<JWT> when connecting;
+     viewers receive person-blurred frames; admins receive unblurred annotated frames.
 
 Why WebSocket for frames instead of MJPEG?
   - MJPEG (multipart/x-mixed-replace) is unreliable through Vite's proxy and
@@ -26,18 +26,23 @@ Why WebSocket for frames instead of MJPEG?
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from jose import JWTError
+from sqlalchemy.orm import Session
+
+from backend.auth.jwt_handler import decode_access_token
+from backend.database.db import SessionLocal
+from backend.database.models import User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["stream"])
 
-# Global set of active WebSocket connections
-_ws_clients: set[WebSocket] = set()
+# Active WebSocket connections → user role ("admin" | "viewer")
+_ws_clients: dict[WebSocket, str] = {}
 
 
 # ── Broadcast helpers (called by the pipeline) ────────────────────────────────
@@ -51,13 +56,22 @@ async def broadcast_event(event: dict) -> None:
     await _broadcast_json(message)
 
 
-async def broadcast_frame(jpeg_bytes: bytes) -> None:
+async def broadcast_frame(jpeg_viewer: bytes, jpeg_admin: bytes) -> None:
     """
-    Push an annotated JPEG frame to all connected dashboards.
+    Push annotated JPEG frames to connected dashboards (role-based).
     Encodes as base64 so it travels safely as JSON text.
     """
-    b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-    await _broadcast_json({"type": "frame", "data": b64})
+    b64_viewer = base64.b64encode(jpeg_viewer).decode("ascii")
+    b64_admin = base64.b64encode(jpeg_admin).decode("ascii")
+    dead: set[WebSocket] = set()
+    for ws, role in list(_ws_clients.items()):
+        b64 = b64_admin if role == "admin" else b64_viewer
+        try:
+            await ws.send_json({"type": "frame", "data": b64})
+        except Exception:
+            dead.add(ws)
+    for ws in dead:
+        _ws_clients.pop(ws, None)
 
 
 async def _broadcast_json(payload: dict) -> None:
@@ -67,16 +81,42 @@ async def _broadcast_json(payload: dict) -> None:
             await ws.send_json(payload)
         except Exception:
             dead.add(ws)
-    _ws_clients.difference_update(dead)
+    for ws in dead:
+        _ws_clients.pop(ws, None)
 
 
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
 
+def _role_from_access_token(token: str) -> str | None:
+    try:
+        payload = decode_access_token(token)
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, ValueError, TypeError):
+        return None
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()  # noqa: E712
+        if user is None:
+            return None
+        return user.role if user.role in ("admin", "viewer") else "viewer"
+    finally:
+        db.close()
+
+
 @router.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket) -> None:
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401)
+        return
+    role = _role_from_access_token(token)
+    if role is None:
+        await websocket.close(code=4401)
+        return
+
     await websocket.accept()
-    _ws_clients.add(websocket)
-    logger.info("WebSocket client connected. Total: %d", len(_ws_clients))
+    _ws_clients[websocket] = role
+    logger.info("WebSocket client connected (%s). Total: %d", role, len(_ws_clients))
     try:
         while True:
             data = await websocket.receive_text()
@@ -85,5 +125,5 @@ async def websocket_live(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        _ws_clients.discard(websocket)
+        _ws_clients.pop(websocket, None)
         logger.info("WebSocket client disconnected. Total: %d", len(_ws_clients))

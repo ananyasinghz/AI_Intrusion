@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.approved_persons import router as approved_persons_router
+from backend.api.assistant import router as assistant_router
 from backend.api.incidents import router as incidents_router
 from backend.api.reports import router as reports_router
 from backend.api.stream import broadcast_event, broadcast_frame, router as stream_router
@@ -57,6 +59,12 @@ async def lifespan(application: FastAPI):
     logger.info("Database ready. Default admin: admin / changeme")
 
     application.state.approved_gallery = approved_gallery
+
+    # Pytest sets SKIP_PIPELINE_LIFESPAN so TestClient does not run the camera
+    # pipeline against the configured DATABASE_URL (avoids schema drift vs in-memory test DB).
+    if os.getenv("SKIP_PIPELINE_LIFESPAN"):
+        yield
+        return
 
     pipeline = DetectionPipeline(
         zone=ZONES[0] if ZONES else "Main Entrance",
@@ -108,7 +116,11 @@ app = FastAPI(
 # In production, replace ["*"] with your frontend's actual origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -125,6 +137,7 @@ app.include_router(zones_router)
 app.include_router(users_router)
 app.include_router(reports_router)
 app.include_router(approved_persons_router)
+app.include_router(assistant_router)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

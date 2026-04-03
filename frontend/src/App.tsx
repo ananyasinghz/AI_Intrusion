@@ -16,6 +16,7 @@ import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
 import ApprovedPersons from "./pages/ApprovedPersons";
+import Assistant from "./pages/Assistant";
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -101,6 +102,14 @@ export default function App() {
               element={
                 <ProtectedRoute adminOnly>
                   <ApprovedPersons />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="assistant"
+              element={
+                <ProtectedRoute adminOnly>
+                  <Assistant />
                 </ProtectedRoute>
               }
             />

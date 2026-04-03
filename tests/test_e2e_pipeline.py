@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
+from backend.database import models as _models  # noqa: F401 — register ORM tables
+from backend.database.db import Base
 from backend.detection.input_source import InputSource
 from backend.pipeline import DetectionPipeline
 
@@ -40,21 +44,20 @@ class SyntheticSource(InputSource):
         pass
 
 
-async def test_pipeline_logs_incidents(tmp_path, monkeypatch):
+async def test_pipeline_logs_incidents(tmp_path):
     """Pipeline should log at least one incident when motion frames arrive."""
-    import os
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test_e2e.db")
-    # Re-initialise DB with new temp path
-    import importlib
-    import backend.config as cfg
-    importlib.reload(cfg)
-    import backend.database.db as db_mod
-    importlib.reload(db_mod)
-    db_mod.init_db()
+    db_path = tmp_path / "test_e2e.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    session_local_test = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
 
     broadcast_mock = AsyncMock()
 
     with (
+        patch("backend.pipeline.SessionLocal", session_local_test),
         patch("backend.pipeline.TelegramAlerter") as mock_alerter_cls,
         patch("backend.pipeline.YOLODetector") as mock_yolo_cls,
     ):
@@ -66,7 +69,7 @@ async def test_pipeline_logs_incidents(tmp_path, monkeypatch):
         mock_yolo.available = False
         mock_yolo.detect.return_value = []
         mock_yolo.blur_persons.side_effect = lambda f, _: f.copy()
-        mock_yolo.annotate.side_effect = lambda f, _: f.copy()
+        mock_yolo.annotate.side_effect = lambda f, _, blur_interior=True: f.copy()
         mock_yolo_cls.return_value = mock_yolo
 
         pipeline = DetectionPipeline(zone="Test Zone", broadcast_callback=broadcast_mock)
@@ -85,20 +88,20 @@ async def test_pipeline_logs_incidents(tmp_path, monkeypatch):
         assert event["zone"] == "Test Zone"
 
 
-async def test_pir_event_logs_incident(tmp_path, monkeypatch):
+async def test_pir_event_logs_incident(tmp_path):
     """PIR events should log motion incidents independently of camera."""
-    import os
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test_pir.db")
-    import importlib
-    import backend.config as cfg
-    importlib.reload(cfg)
-    import backend.database.db as db_mod
-    importlib.reload(db_mod)
-    db_mod.init_db()
+    db_path = tmp_path / "test_pir.db"
+    engine = create_engine(
+        f"sqlite:///{db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    session_local_test = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
 
     broadcast_mock = AsyncMock()
 
     with (
+        patch("backend.pipeline.SessionLocal", session_local_test),
         patch("backend.pipeline.TelegramAlerter") as mock_alerter_cls,
         patch("backend.pipeline.YOLODetector"),
     ):
