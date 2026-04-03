@@ -1,0 +1,15 @@
+.env
+# YOLO weights are large; download with Ultralytics or place locally
+models/*.pt
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+snapshots/*.jpg
+snapshots/*.jpeg
+snapshots/*.png
+reports/*.pdf
+reports/*.csv
+data/incidents.db
+node_modules/
+frontend/dist/
