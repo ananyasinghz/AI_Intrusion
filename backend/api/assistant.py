@@ -125,14 +125,43 @@ def _call_groq(user_message: str, now_utc: datetime) -> dict[str, Any]:
         "max_tokens": 1024,
         "response_format": {"type": "json_object"},
     }
-    with httpx.Client(timeout=60.0) as client:
-        r = client.post(
-            GROQ_CHAT_URL,
-            headers={
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.post(
+                GROQ_CHAT_URL,
+                headers={
+                    "Authorization": f"Bearer {groq_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+    except httpx.ConnectError as exc:
+        logger.error("Cannot reach GROQ API (DNS/network): %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Cannot reach the GROQ API — the server has no internet access. "
+                "Check your network connection or firewall (Python may be blocked)."
+            ),
+        ) from exc
+    except httpx.TimeoutException as exc:
+        logger.error("GROQ API request timed out: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="GROQ API request timed out. Try again in a moment.",
+        ) from exc
+    except httpx.HTTPError as exc:
+        logger.error("GROQ API HTTP error: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Network error contacting GROQ API: {exc}",
+        ) from exc
+
+    if r.status_code == 401:
+        logger.warning("GROQ API returned 401 — key may be invalid or expired")
+        raise HTTPException(
+            status_code=503,
+            detail="GROQ API rejected the key (401). Check that GROQ_API_KEY is valid in .env.",
         )
     if r.status_code != 200:
         logger.warning("Groq API error %s: %s", r.status_code, r.text[:500])

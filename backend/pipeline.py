@@ -93,6 +93,11 @@ class DetectionPipeline:
         # key: (zone_name, detection_type) → monotonic timestamp
         self._last_logged: dict[tuple[str, str], float] = {}
 
+        # Latest detections from YOLO — updated by _detection_loop, read by _broadcast_loop.
+        # Stored separately so _broadcast_loop can annotate a FRESH raw frame rather than
+        # reusing the stale pixel content baked into result.annotated_frame.
+        self._latest_detections: list = []
+
         # Monotonic timestamp of the last frame broadcast
         self._last_frame_broadcast: float = 0.0
         # Target: 10 fps for the live stream
@@ -106,101 +111,196 @@ class DetectionPipeline:
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def run(self, source: InputSource | None = None) -> None:
+        """
+        Three concurrent loops keep the live feed smooth regardless of YOLO speed:
+
+        _capture_loop   — reads raw frames from the source via run_in_executor so it
+                          never blocks the event loop; stores the latest frame in
+                          self._latest_raw_frame.
+
+        _broadcast_loop — encodes and pushes the most-recent annotated frame (falling
+                          back to the raw frame before the first YOLO result) to all
+                          WebSocket clients at a steady 10 fps.  Runs in the event loop
+                          so it can always send, even while YOLO is working.
+
+        _detection_loop — grabs self._latest_raw_frame, runs motion + YOLO via
+                          run_in_executor (off the event loop), then handles all
+                          detection events (DB, alerts, loitering …).  Runs as fast as
+                          YOLO allows without starving the other loops.
+        """
         owns_source = source is None
         src = source or get_input_source()
         self._running = True
+        loop = asyncio.get_running_loop()
         logger.info("Pipeline started for zone '%s'", self._zone)
 
-        try:
+        # Shared state — all writes happen on the event-loop thread (after await), so
+        # no explicit locking is needed in CPython's cooperative scheduler.
+        self._latest_raw_frame: np.ndarray | None = None
+        self._latest_annotated_viewer: np.ndarray | None = None
+        self._latest_annotated_admin: np.ndarray | None = None
+
+        async def _capture_loop() -> None:
             while self._running:
-                ret, frame = src.read()
+                ret, frame = await loop.run_in_executor(None, src.read)
                 if not ret or frame is None:
                     logger.info("Input source exhausted or disconnected.")
+                    self._running = False
                     break
+                self._latest_raw_frame = frame
+                await asyncio.sleep(0)
 
-                if not self._tripwire_loaded:
-                    self._load_tripwire()
-                    self._tripwire_loaded = True
+        async def _broadcast_loop() -> None:
+            """
+            Broadcast at a steady 10 fps using the LATEST raw frame from _capture_loop,
+            annotated with the most-recent YOLO detection results.
 
-                has_motion, bboxes = self._motion_detector.detect(frame)
-                result = self._classifier.classify(frame, has_motion)
+            Key design decisions:
+            - We annotate `_latest_raw_frame` (always ≤ 33 ms old at 30fps) rather than
+              `_latest_annotated_viewer` (which contains pixel content from the frame YOLO
+              processed, potentially 400 ms ago).  This eliminates the "frozen then jump"
+              effect.
+            - Both annotation (OpenCV blur/box drawing) and JPEG encoding are done inside
+              run_in_executor so they never block the asyncio event loop.
+            - We snapshot `raw` and `dets` as local variables before entering the executor
+              so concurrent writes to self._latest_raw_frame / self._latest_detections by
+              _capture_loop / _detection_loop don't interfere mid-encode.
+            """
+            yolo = self._yolo  # local ref — YOLODetector.annotate() is read-only, thread-safe
 
-                # Broadcast annotated frames at ~10 fps (admin vs viewer over WebSocket)
-                await self._maybe_broadcast_frame(
-                    result.annotated_frame,
-                    result.annotated_frame_admin,
-                )
+            while self._running:
+                try:
+                    raw = self._latest_raw_frame
+                    if raw is not None and self._frame_cb is not None:
+                        dets = list(self._latest_detections)  # shallow copy, Detection objects are immutable
 
-                # Primary detection (animal / person / motion)
-                if result.primary_type not in ("clear",):
-                    await self._handle_primary_event(frame, result)
-
-                # Loitering
-                if result.detections:
-                    for ev in self._loitering.update(result.detections):
-                        if self._is_cooldown_ok(self._zone, "loitering"):
-                            snap, snap_full = self._save_snapshot(
-                                frame, result.privacy_frame, "loitering", result.detections,
+                        def _annotate_and_encode(
+                            _raw=raw, _dets=dets
+                        ) -> tuple[bytes, bytes] | None:
+                            frame_v = yolo.annotate(_raw, _dets, blur_interior=True)
+                            frame_a = yolo.annotate(_raw, _dets, blur_interior=False)
+                            ok_v, buf_v = cv2.imencode(
+                                ".jpg", frame_v, [cv2.IMWRITE_JPEG_QUALITY, 55]
                             )
-                            await self._log_and_alert(
-                                zone=self._zone,
-                                detection_type="loitering",
-                                label=f"{ev['label']} (loitering {ev['duration_seconds']:.0f}s)",
-                                confidence=None,
-                                snapshot_path=snap,
-                                snapshot_path_full=snap_full,
-                                source="camera",
-                                track_id=ev["track_id"],
-                                duration_seconds=ev["duration_seconds"],
+                            ok_a, buf_a = cv2.imencode(
+                                ".jpg", frame_a, [cv2.IMWRITE_JPEG_QUALITY, 55]
                             )
+                            if ok_v and ok_a:
+                                return buf_v.tobytes(), buf_a.tobytes()
+                            return None
 
-                # Zone crossing
-                if result.detections:
-                    for ev in self._zone_crossing.update(result.detections):
-                        if self._is_cooldown_ok(self._zone, "zone_crossing"):
-                            snap, snap_full = self._save_snapshot(
-                                frame, result.privacy_frame, "zone_crossing", result.detections,
-                            )
-                            await self._log_and_alert(
-                                zone=self._zone,
-                                detection_type="zone_crossing",
-                                label=f"{ev['label']} ({ev['direction']})",
-                                confidence=None,
-                                snapshot_path=snap,
-                                snapshot_path_full=snap_full,
-                                source="camera",
-                                track_id=ev["track_id"],
-                            )
+                        result_bufs = await loop.run_in_executor(None, _annotate_and_encode)
+                        if result_bufs is not None:
+                            await self._frame_cb(result_bufs[0], result_bufs[1])
 
-                # Optical flow — with consecutive-frame guard
-                if has_motion and bboxes:
-                    anomalies = self._optical_flow.update(frame, bboxes)
-                    if anomalies:
-                        self._flow_strike_count += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug("Frame broadcast skipped", exc_info=True)
+                await asyncio.sleep(self._frame_interval)
+
+        async def _detection_loop() -> None:
+            if not self._tripwire_loaded:
+                self._load_tripwire()
+                self._tripwire_loaded = True
+
+            while self._running:
+                frame = self._latest_raw_frame
+                if frame is None:
+                    await asyncio.sleep(0.02)
+                    continue
+
+                try:
+                    has_motion, bboxes = await loop.run_in_executor(
+                        None, self._motion_detector.detect, frame
+                    )
+                    result = await loop.run_in_executor(
+                        None, self._classifier.classify, frame, has_motion
+                    )
+
+                    self._latest_annotated_viewer = result.annotated_frame
+                    self._latest_annotated_admin = result.annotated_frame_admin
+                    # Snapshot the current detection list so _broadcast_loop can re-apply
+                    # the boxes to whatever raw frame it has at the time of encoding.
+                    self._latest_detections = result.detections
+
+                    if result.primary_type not in ("clear",):
+                        await self._handle_primary_event(frame, result)
+
+                    if result.detections:
+                        for ev in self._loitering.update(result.detections):
+                            if self._is_cooldown_ok(self._zone, "loitering"):
+                                snap, snap_full = self._save_snapshot(
+                                    frame, result.privacy_frame, "loitering", result.detections,
+                                )
+                                await self._log_and_alert(
+                                    zone=self._zone,
+                                    detection_type="loitering",
+                                    label=f"{ev['label']} (loitering {ev['duration_seconds']:.0f}s)",
+                                    confidence=None,
+                                    snapshot_path=snap,
+                                    snapshot_path_full=snap_full,
+                                    source="camera",
+                                    track_id=ev["track_id"],
+                                    duration_seconds=ev["duration_seconds"],
+                                )
+
+                    if result.detections:
+                        for ev in self._zone_crossing.update(result.detections):
+                            if self._is_cooldown_ok(self._zone, "zone_crossing"):
+                                snap, snap_full = self._save_snapshot(
+                                    frame, result.privacy_frame, "zone_crossing", result.detections,
+                                )
+                                await self._log_and_alert(
+                                    zone=self._zone,
+                                    detection_type="zone_crossing",
+                                    label=f"{ev['label']} ({ev['direction']})",
+                                    confidence=None,
+                                    snapshot_path=snap,
+                                    snapshot_path_full=snap_full,
+                                    source="camera",
+                                    track_id=ev["track_id"],
+                                )
+
+                    if has_motion and bboxes:
+                        anomalies = self._optical_flow.update(frame, bboxes)
+                        if anomalies:
+                            self._flow_strike_count += 1
+                        else:
+                            self._flow_strike_count = 0
+
+                        if self._flow_strike_count >= OPTICAL_FLOW_MIN_FRAMES:
+                            if self._is_cooldown_ok(self._zone, "abnormal_activity"):
+                                label = " + ".join(anomalies)
+                                snap, snap_full = self._save_snapshot(
+                                    frame, result.privacy_frame, "abnormal_activity", result.detections,
+                                )
+                                await self._log_and_alert(
+                                    zone=self._zone,
+                                    detection_type="abnormal_activity",
+                                    label=label,
+                                    confidence=None,
+                                    snapshot_path=snap,
+                                    snapshot_path_full=snap_full,
+                                    source="camera",
+                                )
+                                self._flow_strike_count = 0
                     else:
                         self._flow_strike_count = 0
 
-                    if self._flow_strike_count >= OPTICAL_FLOW_MIN_FRAMES:
-                        if self._is_cooldown_ok(self._zone, "abnormal_activity"):
-                            label = " + ".join(anomalies)
-                            snap, snap_full = self._save_snapshot(
-                                frame, result.privacy_frame, "abnormal_activity", result.detections,
-                            )
-                            await self._log_and_alert(
-                                zone=self._zone,
-                                detection_type="abnormal_activity",
-                                label=label,
-                                confidence=None,
-                                snapshot_path=snap,
-                                snapshot_path_full=snap_full,
-                                source="camera",
-                            )
-                            self._flow_strike_count = 0
-                else:
-                    self._flow_strike_count = 0
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Detection loop error — skipping frame")
 
                 await asyncio.sleep(0)
 
+        try:
+            await asyncio.gather(
+                _capture_loop(),
+                _broadcast_loop(),
+                _detection_loop(),
+            )
         except asyncio.CancelledError:
             pass
         finally:
@@ -409,6 +509,10 @@ class DetectionPipeline:
                 incident.id, zone, detection_type, label,
                 " [REPEAT]" if is_repeat_visitor else "",
             )
+            return incident
+        except Exception:
+            logger.exception("Failed to save incident to DB — pipeline will continue")
+            db.rollback()
             return incident
         finally:
             db.close()
